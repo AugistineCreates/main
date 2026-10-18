@@ -1376,6 +1376,23 @@ pub enum VerifierRole {
     Previous = 3,
 }
 
+/// A single delegation entry returned by `list_delegations`.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DelegationEntry {
+    pub delegate: Address,
+    pub record: DelegationRecord,
+}
+
+/// Paginated result from `list_delegations`.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DelegationPage {
+    pub entries: Vec<DelegationEntry>,
+    pub next_cursor: Option<u32>,
+    pub total: u32,
+}
+
 /// A single verifier slot returned by `list_verifiers`.
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1431,6 +1448,10 @@ pub enum DataKey {
     Delegation(Address, Address),
     /// Count of distinct delegate addresses held by a grantor (#192).
     DelegationCount(Address),
+    /// 0-based delegation slot index mapping to delegate address.
+    DelegationIndex(Address, u32),
+    /// Slot index of a delegate for a grantor.
+    DelegationSlot(Address, Address),
     /// Verifier rotation state (schedule/activate/rollback).
     VerifierState,
     /// Declared circuit-version window for the active verifier (#343).
@@ -3025,6 +3046,12 @@ impl HarpocratesRegistry {
             env.storage()
                 .persistent()
                 .set(&DataKey::DelegationCount(grantor.clone()), &(count + 1));
+            env.storage()
+                .persistent()
+                .set(&DataKey::DelegationIndex(grantor.clone(), count), &delegate);
+            env.storage()
+                .persistent()
+                .set(&DataKey::DelegationSlot(grantor.clone(), delegate.clone()), &count);
         }
 
         let granted_at = env.ledger().timestamp();
@@ -3080,13 +3107,44 @@ impl HarpocratesRegistry {
 
         env.storage().persistent().remove(&key);
 
-        // Free the slot so the grantor can delegate to someone else. Saturating
-        // so a corrupted counter can never underflow into a huge allowance.
         let count = delegation_count(&env, &grantor);
+        let new_count = count.saturating_sub(1);
         env.storage().persistent().set(
             &DataKey::DelegationCount(grantor.clone()),
-            &count.saturating_sub(1),
+            &new_count,
         );
+
+        // Slot reuse: swap the revoked delegate's index with the last slot's delegate.
+        let slot_opt: Option<u32> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::DelegationSlot(grantor.clone(), delegate.clone()));
+        env.storage()
+            .persistent()
+            .remove(&DataKey::DelegationSlot(grantor.clone(), delegate.clone()));
+
+        if let Some(slot) = slot_opt {
+            let last_index = new_count;
+            if slot != last_index {
+                if let Some(last_delegate) = env
+                    .storage()
+                    .persistent()
+                    .get::<DataKey, Address>(&DataKey::DelegationIndex(grantor.clone(), last_index))
+                {
+                    env.storage().persistent().set(
+                        &DataKey::DelegationIndex(grantor.clone(), slot),
+                        &last_delegate,
+                    );
+                    env.storage().persistent().set(
+                        &DataKey::DelegationSlot(grantor.clone(), last_delegate),
+                        &slot,
+                    );
+                }
+            }
+            env.storage()
+                .persistent()
+                .remove(&DataKey::DelegationIndex(grantor.clone(), last_index));
+        }
 
         DelegationRevoked {
             grantor,
@@ -3095,6 +3153,67 @@ impl HarpocratesRegistry {
             revoked_at: env.ledger().timestamp(),
         }
         .publish(&env);
+    }
+
+    /// Read-only: list delegations for a grantor with pagination.
+    ///
+    /// * `cursor` - 0-based index into the grantor's delegation list.
+    /// * `limit`  - maximum records to return, capped by `MAX_DELEGATIONS_PER_GRANTOR`.
+    ///
+    /// Returns delegate addresses and records in `DelegationPage`.
+    pub fn list_delegations(
+        env: Env,
+        grantor: Address,
+        cursor: u32,
+        limit: u32,
+    ) -> DelegationPage {
+        let total = delegation_count(&env, &grantor);
+        let effective_limit = if limit == 0 || limit > MAX_DELEGATIONS_PER_GRANTOR {
+            MAX_DELEGATIONS_PER_GRANTOR
+        } else {
+            limit
+        };
+
+        let mut entries = Vec::new(&env);
+        if cursor >= total {
+            return DelegationPage {
+                entries,
+                next_cursor: None,
+                total,
+            };
+        }
+
+        let end = if total - cursor < effective_limit {
+            total
+        } else {
+            cursor + effective_limit
+        };
+
+        let mut idx = cursor;
+        while idx < end {
+            if let Some(delegate) = env
+                .storage()
+                .persistent()
+                .get::<DataKey, Address>(&DataKey::DelegationIndex(grantor.clone(), idx))
+            {
+                if let Some(record) = env
+                    .storage()
+                    .persistent()
+                    .get::<DataKey, DelegationRecord>(&DataKey::Delegation(grantor.clone(), delegate.clone()))
+                {
+                    entries.push_back(DelegationEntry { delegate, record });
+                }
+            }
+            idx += 1;
+        }
+
+        let next_cursor = if end < total { Some(end) } else { None };
+
+        DelegationPage {
+            entries,
+            next_cursor,
+            total,
+        }
     }
 
     /// Read-only: the raw delegation record, if one is stored. A record past
