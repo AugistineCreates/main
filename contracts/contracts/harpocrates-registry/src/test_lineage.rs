@@ -424,13 +424,18 @@ fn a_rejected_edge_does_not_spend_a_parent_budget() {
     repeated_parents.push_back(evidence.clone());
     let repeated = client.try_register_lineage(
         &actor,
-        &repeated_parents,
-        &bytes32(&env, 0xB0),
+        &soroban_sdk::Vec::from_array(&env, [evidence.clone()]),
+        &bytes32(&env, 4),
         &Symbol::new(&env, "crop"),
-        &bytes32(&env, 0xB1),
+        &evidence,
         &1,
     );
-    assert!(repeated.is_err());
+    assert_eq!(
+        repeated,
+        Err(Ok(soroban_sdk::Error::from_contract_error(
+            RegistryError::LineageCycle as u32
+        )))
+    );
 
     // A forged depth is rejected the same way.
     let forged = client.try_register_lineage(
@@ -438,8 +443,14 @@ fn a_rejected_edge_does_not_spend_a_parent_budget() {
         &one_parent(&env, &evidence),
         &bytes32(&env, 0xB2),
         &Symbol::new(&env, "crop"),
-        &bytes32(&env, 0xB3),
-        &3,
+        &bytes32(&env, 5),
+        &1,
+    );
+    assert_eq!(
+        forged,
+        Err(Ok(soroban_sdk::Error::from_contract_error(
+            RegistryError::LineageEmptyParents as u32
+        )))
     );
     assert!(forged.is_err());
 

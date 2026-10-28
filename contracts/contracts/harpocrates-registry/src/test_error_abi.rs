@@ -147,19 +147,8 @@ fn canonical_name(err: RegistryError) -> &'static str {
         RegistryError::IssuerRotationNotFound => "IssuerRotationNotFound",
         RegistryError::IssuerRotationGraceStillActive => "IssuerRotationGraceStillActive",
         RegistryError::CircuitVersionMismatch => "CircuitVersionMismatch",
-        RegistryError::InvalidCursor => "InvalidCursor",
-        RegistryError::ListLimitExceeded => "ListLimitExceeded",
-        RegistryError::ExpiredCredentialRoot => "ExpiredCredentialRoot",
-        RegistryError::LineageFanOutSaturated => "LineageFanOutSaturated",
-        RegistryError::LineageDepthMismatch => "LineageDepthMismatch",
-        RegistryError::RoleConflict => "RoleConflict",
-        RegistryError::ReceiptProofNotFound => "ReceiptProofNotFound",
-        RegistryError::ReceiptProofUnavailable => "ReceiptProofUnavailable",
-        RegistryError::ReceiptAlreadyCommitted => "ReceiptAlreadyCommitted",
-        RegistryError::InvalidReceiptDigest => "InvalidReceiptDigest",
-        RegistryError::ReceiptSignerUnknown => "ReceiptSignerUnknown",
-        RegistryError::ReceiptSignerRevoked => "ReceiptSignerRevoked",
-        RegistryError::ReceiptSignersSaturated => "ReceiptSignersSaturated",
+        RegistryError::ReporterDisputesSaturated => "ReporterDisputesSaturated",
+        RegistryError::InsufficientApprovals => "InsufficientApprovals",
     }
 }
 
@@ -254,19 +243,8 @@ const ALL_VARIANTS: &[RegistryError] = &[
     RegistryError::IssuerRotationNotFound,
     RegistryError::IssuerRotationGraceStillActive,
     RegistryError::CircuitVersionMismatch,
-    RegistryError::InvalidCursor,
-    RegistryError::ListLimitExceeded,
-    RegistryError::ExpiredCredentialRoot,
-    RegistryError::LineageFanOutSaturated,
-    RegistryError::LineageDepthMismatch,
-    RegistryError::RoleConflict,
-    RegistryError::ReceiptProofNotFound,
-    RegistryError::ReceiptProofUnavailable,
-    RegistryError::ReceiptAlreadyCommitted,
-    RegistryError::InvalidReceiptDigest,
-    RegistryError::ReceiptSignerUnknown,
-    RegistryError::ReceiptSignerRevoked,
-    RegistryError::ReceiptSignersSaturated,
+    RegistryError::ReporterDisputesSaturated,
+    RegistryError::InsufficientApprovals,
 ];
 
 #[cfg(test)]
@@ -403,7 +381,7 @@ fn retryable_codes_require_external_condition_only() {
             retryable.push(row.code);
         }
     }
-    let expected: &[u32] = &[21, 32, 41, 66, 86];
+    let expected: &[u32] = &[21, 32, 41, 66, 86, 88];
     assert_eq!(
         retryable.as_slice(),
         expected,

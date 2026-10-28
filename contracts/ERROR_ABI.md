@@ -44,8 +44,9 @@ scope are `malformed`, `oversized`, `expired`, `revoked`, `unsupported`, and
 
 `Retryable` means the *same* call may succeed later with no code or input change,
 once the external condition (unpause, timelock delay, activation ledger, cooldown,
-issuer rotation grace window) has resolved. Every other code requires a different
-input, a different actor, or new evidence before the call can succeed.
+issuer rotation grace window, quota window rollover) has resolved. Every other
+code requires a different input, a different actor, or new evidence before the
+call can succeed.
 
 | Code | Variant | Class | Retryable | Meaning |
 |------|---------|-------|-----------|---------|
@@ -101,7 +102,7 @@ input, a different actor, or new evidence before the call can succeed.
 | 50 | `UnknownSchema` | unsupported | no | The schema id is not registered. |
 | 51 | `InactiveSchema` | unsupported | no | The schema was deprecated and cannot be used. |
 | 52 | `SchemaVersionMismatch` | unsupported | no | The schema version is not the expected one. |
-| 53 | `StaleEpoch` | expired | no | The scoped-nullifier proof was generated for a stale scope epoch. |
+| 53 | `StaleEpoch` | expired | no | The scoped-nullifier proof was generated for a stale scope epoch, or `set_scope_epoch` attempted a non-increasing epoch. |
 | 54 | `BatchSizeExceeded` | oversized | no | The batch is empty or above the element cap. |
 | 55 | `BatchCredentialRootMismatch` | malformed | no | Batch elements do not share one credential root. |
 | 56 | `BatchCountMismatch` | malformed | no | The batch size does not match the supplied video-hash list. |
@@ -136,19 +137,8 @@ input, a different actor, or new evidence before the call can succeed.
 | 85 | `IssuerRotationNotFound` | state | no | No issuer rotation grace record exists for the requested key. |
 | 86 | `IssuerRotationGraceStillActive` | state | yes | The issuer rotation grace window has not lapsed; retry once it has. |
 | 87 | `CircuitVersionMismatch` | unsupported | no | The scoped envelope commits a circuit version other than the expected one, or is the bare frame that commits none. |
-| 88 | `InvalidCursor` | malformed | no | The `list_verifiers` cursor is out of range or malformed. |
-| 89 | `ListLimitExceeded` | oversized | no | The `list_verifiers` limit is above `MAX_VERIFIER_LIST_LIMIT`. |
-| 90 | `ExpiredCredentialRoot` | expired | no | The credential root has passed its configured expiry. |
-| 91 | `LineageFanOutSaturated` | resource | no | A lineage parent already has `MAX_LINEAGE_FANOUT` derivatives. |
-| 92 | `LineageDepthMismatch` | malformed | no | The claimed lineage depth differs from the depth derived from the parents. |
-| 93 | `RoleConflict` | auth | no | The address already holds a conflicting admin or issuer role. |
-| 94 | `ReceiptProofNotFound` | state | no | The receipt commit named a proof that does not exist. |
-| 95 | `ReceiptProofUnavailable` | revoked | no | The receipt commit targeted an expired or revoked proof. |
-| 96 | `ReceiptAlreadyCommitted` | conflict | no | A different receipt digest is already committed for the proof. |
-| 97 | `InvalidReceiptDigest` | malformed | no | The receipt digest is all zeros. |
-| 98 | `ReceiptSignerUnknown` | unsupported | no | The receipt-signing key is not on the allowlist. |
-| 99 | `ReceiptSignerRevoked` | revoked | no | The receipt-signing key was revoked. |
-| 100 | `ReceiptSignersSaturated` | resource | no | `MAX_RECEIPT_SIGNERS` active receipt-signing keys already exist. |
+| 88 | `ReporterDisputesSaturated` | resource | no | The reporter reached `MAX_OPEN_DISPUTES_PER_REPORTER`. |
+| 89 | `InsufficientApprovals` | auth | no | The action requires admin council threshold approvals. |
 
 ## Privacy Rules
 
@@ -165,7 +155,7 @@ input, a different actor, or new evidence before the call can succeed.
 
 ## Compatibility And Migration
 
-- **Additive only.** Codes `1..=86` are frozen at this ABI version. A future change
+- **Additive only.** Codes `1..=88` are frozen at this ABI version. A future change
   that needs a new failure appends the next unused discriminant and adds a row here;
   it must not insert, reorder, or reuse a code.
 - **No storage impact.** The ABI describes revert values. It does not add storage
