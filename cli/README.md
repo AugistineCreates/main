@@ -84,11 +84,12 @@ Script authors and CI integrations can rely on the following exit codes to deter
 | `3` | `not_found` / `missing` / `unknown` | `verify`, `status`, `verify-lineage` |
 | `4` | `network_mismatch` | `verify` |
 | `5` | `contract_mismatch` | `verify` |
-| `6` | `pending` (offline verification) | `verify` |
-| `7` | `failed` transaction | `verify` |
-| `8` | `error` (malformed input, dependency failure, invalid receipt, etc.) | `verify`, `status`, `verify-receipt`, `manifest`, `hash`, `c2pa`, `verify-lineage` |
+| `6` | `incomplete` / `pending` (offline verification, skipped required checks, or bounded lineage traversal) | `verify`, `verify-lineage`, batch verification |
+| `7` | `invalid` / `failed` (failed transaction, invalid signed receipt, disputed ancestor, or lineage cycle) | `verify`, `verify-receipt`, `verify-lineage`, batch verification |
+| `8` | `error` (malformed input, unreadable file, internal error) | `verify`, `status`, `verify-receipt`, `manifest`, `hash`, `c2pa`, `verify-lineage` |
+| `9` | `unavailable` (RPC timeout, unreachable network, or verification dependency failure) | `verify`, `status`, `verify-lineage`, batch verification |
 
-An offline verification exits `6` with `pending`: it checks syntax and deployment binding but **cannot** establish on-chain validity. Do not treat a nonzero exit or an offline receipt as verified evidence. `--tx-hash`, when supplied, must match the manifest. An RPC request timeout (`--timeout`) is a dependency failure and thus also exits `8`.
+An offline verification exits `6` (`incomplete` / `pending`): it checks syntax and deployment binding but **cannot** establish on-chain validity. Skipped required checks (including empty batch runs or lineage graphs truncated by depth/fan-out bounds) never exit `0`. Do not treat a nonzero exit or an offline receipt as verified evidence. `--tx-hash`, when supplied, must match the manifest. An RPC request timeout (`--timeout`) or unreachable dependency exits `9` (`unavailable`), distinct from invalid verification (`7`) and malformed input (`8`).
 
 Harpocrates CLI environment variables:
 

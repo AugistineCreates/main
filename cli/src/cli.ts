@@ -31,7 +31,7 @@ import {
   serializeC2paExport,
   type C2paExport,
 } from './c2pa.js'
-import { verifyLineageTree, formatLineageTree } from './verify-lineage.js'
+import { verifyLineageTree, formatLineageTree, type LineageTreeResult } from './verify-lineage.js'
 import { logStructured, redactSensitive } from './logging.js'
 import { createRequire } from 'node:module'
 import { parseCliArgs, CliUsageError, type ParsedArgs } from './args.js'
@@ -79,6 +79,68 @@ function makeDebugLog(debug: boolean): (event: Record<string, unknown>) => void 
   return (event: Record<string, unknown>) => {
     if (debug) logStructured(sink, 'debug', event)
   }
+}
+
+export const EXIT_CODES = {
+  VALID: 0,
+  EXPIRED: 1,
+  REVOKED: 2,
+  USAGE_ERROR: 2,
+  NOT_FOUND: 3,
+  NETWORK_MISMATCH: 4,
+  CONTRACT_MISMATCH: 5,
+  INCOMPLETE: 6,
+  INVALID: 7,
+  ERROR: 8,
+  UNAVAILABLE: 9,
+} as const
+
+export const VERIFY_EXIT_CODES: Record<string, number> = {
+  valid: EXIT_CODES.VALID,
+  expired: EXIT_CODES.EXPIRED,
+  revoked: EXIT_CODES.REVOKED,
+  not_found: EXIT_CODES.NOT_FOUND,
+  network_mismatch: EXIT_CODES.NETWORK_MISMATCH,
+  contract_mismatch: EXIT_CODES.CONTRACT_MISMATCH,
+  pending: EXIT_CODES.INCOMPLETE,
+  failed: EXIT_CODES.INVALID,
+  error: EXIT_CODES.ERROR,
+}
+
+export function resolveLineageExitCode(result: LineageTreeResult): number {
+  if (result.success) return EXIT_CODES.VALID
+  if (result.revokedCount > 0) return EXIT_CODES.REVOKED
+  if (result.expiredCount > 0) return EXIT_CODES.EXPIRED
+  if (result.cycleDetected || result.disputedCount > 0) return EXIT_CODES.INVALID
+  if (result.missingCount > 0) return EXIT_CODES.NOT_FOUND
+  if (result.unavailableCount > 0) return EXIT_CODES.UNAVAILABLE
+  if (result.incompleteCount > 0) return EXIT_CODES.INCOMPLETE
+  return EXIT_CODES.ERROR
+}
+
+const BATCH_EXIT_PRECEDENCE: readonly number[] = [
+  EXIT_CODES.REVOKED,
+  EXIT_CODES.EXPIRED,
+  EXIT_CODES.INVALID,
+  EXIT_CODES.CONTRACT_MISMATCH,
+  EXIT_CODES.NETWORK_MISMATCH,
+  EXIT_CODES.NOT_FOUND,
+  EXIT_CODES.ERROR,
+  EXIT_CODES.UNAVAILABLE,
+  EXIT_CODES.INCOMPLETE,
+]
+
+/**
+ * Aggregate exit codes across a batch of verification checks.
+ * Never reports an empty or partially skipped batch as success (0).
+ */
+export function resolveBatchExitCode(codes: readonly number[]): number {
+  if (codes.length === 0) return EXIT_CODES.INCOMPLETE
+  for (const candidate of BATCH_EXIT_PRECEDENCE) {
+    if (codes.includes(candidate)) return candidate
+  }
+  const firstNonZero = codes.find((code) => code !== EXIT_CODES.VALID)
+  return firstNonZero ?? EXIT_CODES.VALID
 }
 
 function exit(code: number, message?: string): never {
@@ -183,8 +245,8 @@ async function handleVerify(flags: Record<string, string>, debugLog: (event: Rec
       const result = classifyVerification(manifest, txVerification, chainRecord)
       receipt = createReceipt(manifest, txVerification, chainRecord, result)
     } catch (err) {
-      if (err instanceof LookupTimeoutError) exit(8, 'verification dependency failed: RPC timeout')
-      exit(8, 'verification dependency failed')
+      if (err instanceof LookupTimeoutError) exit(EXIT_CODES.UNAVAILABLE, 'verification dependency unavailable: RPC timeout')
+      exit(EXIT_CODES.UNAVAILABLE, 'verification dependency unavailable')
     }
   }
 
@@ -194,18 +256,7 @@ async function handleVerify(flags: Record<string, string>, debugLog: (event: Rec
     printText(formatReceipt(receipt))
   }
 
-  const exitCodes: Record<string, number> = {
-    valid: 0,
-    expired: 1,
-    revoked: 2,
-    not_found: 3,
-    network_mismatch: 4,
-    contract_mismatch: 5,
-    pending: 6,
-    failed: 7,
-    error: 8,
-  }
-  exit(exitCodes[receipt.result] ?? 8)
+  exit(VERIFY_EXIT_CODES[receipt.result] ?? EXIT_CODES.ERROR)
 }
 
 function parseTimeout(raw: string | undefined): number {
@@ -380,7 +431,7 @@ async function handleVerifyReceipt(flags: Record<string, string>, debugLog: (eve
     } else {
       printText(`❌ Invalid receipt: ${result.reason}`)
     }
-    exit(8)
+    exit(EXIT_CODES.INVALID)
   }
 }
 
@@ -490,13 +541,17 @@ async function handleVerifyLineage(
   }
 
   if (!result.success) {
-    if (result.revokedCount > 0) exit(2, 'an ancestor is revoked')
-    if (result.expiredCount > 0) exit(1, 'an ancestor is expired')
-    if (result.missingCount > 0) exit(3, 'an ancestor is missing')
-    exit(8, result.failureReason ?? 'lineage verification failed')
+    const code = resolveLineageExitCode(result)
+    if (code === EXIT_CODES.REVOKED) exit(code, 'an ancestor is revoked')
+    if (code === EXIT_CODES.EXPIRED) exit(code, 'an ancestor is expired')
+    if (code === EXIT_CODES.INVALID) exit(code, result.failureReason ?? 'lineage verification invalid')
+    if (code === EXIT_CODES.NOT_FOUND) exit(code, 'an ancestor is missing')
+    if (code === EXIT_CODES.UNAVAILABLE) exit(code, result.failureReason ?? 'lineage verification unavailable')
+    if (code === EXIT_CODES.INCOMPLETE) exit(code, result.failureReason ?? 'lineage verification incomplete')
+    exit(code, result.failureReason ?? 'lineage verification failed')
   }
 
-  exit(0)
+  exit(EXIT_CODES.VALID)
 }
 
 export const STATUS_EXIT_CODES: Record<ProofLifecycleStatus, number> = {
@@ -566,7 +621,7 @@ export async function handleStatus(
       networkPassphrase: network,
     })
   } catch {
-    exit(8, 'status lookup dependency failed')
+    exit(EXIT_CODES.UNAVAILABLE, 'status lookup dependency unavailable')
   }
 
   const payload = {
@@ -690,14 +745,14 @@ Debugging:
 Exit codes:
   0   valid / registered
   1   expired
-  2   revoked
+  2   revoked / usage error
   3   not_found / missing / unknown
   4   network_mismatch
   5   contract_mismatch
-  6   pending
-  7   failed
-  8   error
-      (RPC timeouts during verification also exit with 8)
+  6   incomplete / pending (offline verification, skipped required checks, or bounded lineage)
+  7   invalid / failed (failed transaction, invalid receipt, disputed ancestor, or lineage cycle)
+  8   error (malformed input or internal error)
+  9   unavailable (RPC timeout, network, or verification dependency unavailable)
   For a full table of every exit code and which commands emit them, see the Exit codes section in cli/README.md.
 `
   return help.trim()
